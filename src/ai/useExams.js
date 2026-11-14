@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createExam, deleteExam, describeError, listExams } from "./api";
 
 export default function useExams() {
@@ -6,42 +6,64 @@ export default function useExams() {
   const [exams, setExams] = useState([]);
   const [error, setError] = useState(null);
   const [actionError, setActionError] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const creatingRef = useRef(false);
 
   useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
     setStatus("loading");
-    listExams()
+    setError(null);
+    listExams({ signal: controller.signal })
       .then((data) => {
+        if (cancelled) return;
         setExams(data);
         setStatus("ready");
       })
       .catch((err) => {
-        console.error("Error loading exams", err);
+        if (cancelled) return;
         setExams([]);
-        setStatus("ready");
+        setError(describeError(err));
+        setStatus("error");
       });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [attempt]);
 
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
 
   const remove = useCallback(async (id) => {
+    setActionError(null);
     try {
       await deleteExam(id);
+      setExams((current) => current.filter((exam) => exam.id !== id));
+      return true;
     } catch (err) {
-      console.error("Error deleting exam", err);
+      setActionError(describeError(err));
+      return false;
     }
   }, []);
 
   const create = useCallback(async (title) => {
+    if (creatingRef.current) return false;
+    creatingRef.current = true;
+    setSaving(true);
+    setActionError(null);
     try {
       const exam = await createExam(title);
       setExams((current) => [...current, exam]);
       return true;
     } catch (err) {
-      console.error("Error creating exam", err);
+      setActionError(describeError(err));
       return false;
+    } finally {
+      creatingRef.current = false;
+      setSaving(false);
     }
   }, []);
 
-  return { status, exams, error, actionError, saving: false, reload, remove, create };
+  return { status, exams, error, actionError, saving, reload, remove, create };
 }
